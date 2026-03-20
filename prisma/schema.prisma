@@ -7,6 +7,50 @@ datasource db {
   provider = "postgresql"
 }
 
+// ============================================
+// AUTH.JS REQUIRED MODELS
+// ============================================
+
+model Account {
+  id                String  @id @default(uuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ============================================
+// WORKSPACE
+// Represents one company using Resolve.
+// ============================================
 model Workspace {
   id        String   @id @default(uuid())
   name      String
@@ -18,28 +62,46 @@ model Workspace {
   tickets Ticket[]
 }
 
+// ============================================
+// USER
+// Extended to work with Auth.js.
+// ============================================
 model User {
-  id        String   @id @default(uuid())
-  name      String
-  email     String   @unique
-  role      Role     @default(CUSTOMER)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String    @id @default(uuid())
+  name           String?
+  email          String    @unique
+  emailVerified  DateTime?
+  image          String?
+  hashedPassword String?
+  role           Role      @default(CUSTOMER)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  workspaceId String
-  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id])
 
+  // Auth.js relations
+  accounts Account[]
+  sessions Session[]
+
+  // App relations
   assignedTickets Ticket[]  @relation("AssignedAgent")
   customerTickets Ticket[]  @relation("Customer")
   messages        Message[]
 }
 
+// ============================================
+// ROLE
+// ============================================
 enum Role {
   CUSTOMER
   AGENT
   ADMIN
 }
 
+// ============================================
+// TICKET
+// ============================================
 model Ticket {
   id        String       @id @default(uuid())
   status    TicketStatus @default(OPEN)
@@ -59,6 +121,9 @@ model Ticket {
   aiAnalysis AIAnalysis?
 }
 
+// ============================================
+// TICKET STATUS
+// ============================================
 enum TicketStatus {
   OPEN
   IN_PROGRESS
@@ -66,6 +131,9 @@ enum TicketStatus {
   CLOSED
 }
 
+// ============================================
+// MESSAGE
+// ============================================
 model Message {
   id        String   @id @default(uuid())
   content   String
@@ -78,6 +146,9 @@ model Message {
   sender   User   @relation(fields: [senderId], references: [id])
 }
 
+// ============================================
+// AI ANALYSIS
+// ============================================
 model AIAnalysis {
   id             String   @id @default(uuid())
   category       String?
