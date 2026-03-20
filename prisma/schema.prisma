@@ -1,0 +1,92 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Workspace {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users   User[]
+  tickets Ticket[]
+}
+
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  role      Role     @default(CUSTOMER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  assignedTickets Ticket[]  @relation("AssignedAgent")
+  customerTickets Ticket[]  @relation("Customer")
+  messages        Message[]
+}
+
+enum Role {
+  CUSTOMER
+  AGENT
+  ADMIN
+}
+
+model Ticket {
+  id        String       @id @default(uuid())
+  status    TicketStatus @default(OPEN)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  customerId String
+  customer   User   @relation("Customer", fields: [customerId], references: [id])
+
+  assignedAgentId String?
+  assignedAgent   User?   @relation("AssignedAgent", fields: [assignedAgentId], references: [id])
+
+  messages   Message[]
+  aiAnalysis AIAnalysis?
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  content   String
+  createdAt DateTime @default(now())
+
+  ticketId String
+  ticket   Ticket @relation(fields: [ticketId], references: [id])
+
+  senderId String
+  sender   User   @relation(fields: [senderId], references: [id])
+}
+
+model AIAnalysis {
+  id             String   @id @default(uuid())
+  category       String?
+  urgency        String?
+  summary        String?
+  suggestedReply String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  ticketId String @unique
+  ticket   Ticket @relation(fields: [ticketId], references: [id])
+}
