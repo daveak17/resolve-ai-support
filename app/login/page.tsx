@@ -28,7 +28,17 @@ export default function LoginPage() {
       return
     }
 
-    router.push('/dashboard')
+    // Fetch the session to find out the user's role
+    const response = await fetch('/api/auth/session')
+    const session = await response.json()
+
+    // Redirect based on role
+    if (session?.user?.role === 'AGENT' || session?.user?.role === 'ADMIN') {
+      router.push('/dashboard')
+    } else {
+      router.push('/support')
+    }
+
   }
 
   return (
