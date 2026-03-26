@@ -1,17 +1,18 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import Header from '@/components/layout/Header'
 import TicketCard from '@/components/dashboard/TicketCard'
 import MessageList from '@/components/chat/MessageList'
 import MessageInput from '@/components/chat/MessageInput'
+import { getSocket } from '@/lib/socket'
 
 interface Message {
   id: string
   content: string
-  sender: {
+  sender?: {
     id: string
     name: string | null
     role: string
@@ -42,18 +43,36 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
 
+  const currentRoomRef = useRef<string | null>(null)
+
   useEffect(() => {
     if (status === 'unauthenticated') {
       router.push('/login')
     }
   }, [status, router])
 
-  // Fetch tickets when the page loads
   useEffect(() => {
     if (status === 'authenticated') {
       fetchTickets()
+      setupSocket()
     }
   }, [status])
+
+  function setupSocket() {
+    const socket = getSocket()
+
+    // Remove any existing listeners first to prevent duplicates
+    socket.off('message-received')
+
+    socket.on('message-received', (message: Message) => {
+      setSelectedTicketMessages((prev) => {
+        // Check if message already exists to prevent duplicates
+        const exists = prev.some((m) => m.id === message.id)
+        if (exists) return prev
+        return [...prev, message]
+      })
+    })
+  }
 
   async function fetchTickets() {
     try {
@@ -69,9 +88,16 @@ export default function DashboardPage() {
     }
   }
 
-  // Fetch messages when a ticket is selected
   async function handleSelectTicket(ticketId: string) {
     setSelectedTicketId(ticketId)
+
+    // Leave the previous room and join the new one
+    const socket = getSocket()
+    if (currentRoomRef.current) {
+      socket.emit('leave-ticket', currentRoomRef.current)
+    }
+    socket.emit('join-ticket', ticketId)
+    currentRoomRef.current = ticketId
 
     try {
       const response = await fetch(`/api/tickets/${ticketId}`)
@@ -80,12 +106,12 @@ export default function DashboardPage() {
         setSelectedTicketMessages(data.messages)
       }
     } catch (error) {
-      console.error('Failed to fetch ticket messages:', error)
+      console.error('Failed to fetch ticket:', error)
     }
   }
 
   async function handleSendMessage(content: string) {
-    if (!selectedTicketId) return
+    if (!selectedTicketId || !session?.user) return
     setSending(true)
 
     try {
@@ -103,12 +129,21 @@ export default function DashboardPage() {
         const safeMessage = {
           ...newMessage,
           sender: newMessage.sender || {
-            id: session?.user?.id || '',
-            name: session?.user?.name || 'Agent',
+            id: session.user.id,
+            name: session.user.name || 'Agent',
             role: 'AGENT',
           },
         }
+
+        // Add to local state immediately
         setSelectedTicketMessages((prev) => [...prev, safeMessage])
+
+        // Broadcast to customer via Socket.io
+        const socket = getSocket()
+        socket.emit('send-message', {
+          ticketId: selectedTicketId,
+          message: safeMessage,
+        })
       }
     } catch (error) {
       console.error('Failed to send message:', error)
@@ -130,7 +165,9 @@ export default function DashboardPage() {
       if (response.ok) {
         setTickets((prev) =>
           prev.map((t) =>
-            t.id === selectedTicketId ? { ...t, status: 'RESOLVED' } : t
+            t.id === selectedTicketId
+              ? { ...t, status: 'RESOLVED' as const }
+              : t
           )
         )
       }
@@ -143,12 +180,12 @@ export default function DashboardPage() {
     return messages.map((msg) => ({
       id: msg.id,
       content: msg.content,
-      senderName: msg.sender.name || 'Unknown',
+      senderName: msg.sender?.name || 'Unknown',
       timestamp: new Date(msg.createdAt).toLocaleTimeString([], {
         hour: '2-digit',
         minute: '2-digit',
       }),
-      isOwnMessage: msg.sender.id === session?.user?.id,
+      isOwnMessage: msg.sender?.id === session?.user?.id,
     }))
   }
 
@@ -178,12 +215,9 @@ export default function DashboardPage() {
 
       <div className="flex flex-1 overflow-hidden">
 
-        {/* Ticket list sidebar */}
         <div className="w-80 bg-white border-r border-gray-200 flex flex-col overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-200">
-            <h2 className="text-sm font-semibold text-gray-900">
-              My Tickets
-            </h2>
+            <h2 className="text-sm font-semibold text-gray-900">My Tickets</h2>
             <p className="text-xs text-gray-400 mt-0.5">
               {tickets.length} assigned to you
             </p>
@@ -200,11 +234,10 @@ export default function DashboardPage() {
                   ticketNumber={`#${ticket.id.slice(0, 8)}`}
                   customerName={ticket.customer.name || ticket.customer.email}
                   preview={getTicketPreview(ticket)}
-                  status={ticket.status.toLowerCase() as any}
+                  status={ticket.status.toLowerCase() as 'open' | 'in_progress' | 'resolved'}
                   urgency="medium"
                   timestamp={new Date(ticket.updatedAt).toLocaleTimeString(
-                    [],
-                    { hour: '2-digit', minute: '2-digit' }
+                    [], { hour: '2-digit', minute: '2-digit' }
                   )}
                   isSelected={selectedTicketId === ticket.id}
                   onClick={() => handleSelectTicket(ticket.id)}
@@ -214,19 +247,16 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Conversation area */}
         <div className="flex-1 flex flex-col overflow-hidden">
           {selectedTicket ? (
             <>
               <div className="px-6 py-3 bg-white border-b border-gray-200 flex items-center justify-between">
                 <div>
                   <h2 className="text-sm font-semibold text-gray-900">
-                    {selectedTicket.customer.name ||
-                      selectedTicket.customer.email}
+                    {selectedTicket.customer.name || selectedTicket.customer.email}
                   </h2>
                   <p className="text-xs text-gray-400">
-                    #{selectedTicket.id.slice(0, 8)} ·{' '}
-                    {selectedTicket.status}
+                    #{selectedTicket.id.slice(0, 8)} · {selectedTicket.status}
                   </p>
                 </div>
                 {selectedTicket.status !== 'RESOLVED' && (
@@ -240,10 +270,7 @@ export default function DashboardPage() {
               </div>
 
               <MessageList messages={formatMessages(selectedTicketMessages)} />
-              <MessageInput
-                onSendMessage={handleSendMessage}
-                disabled={sending}
-              />
+              <MessageInput onSendMessage={handleSendMessage} disabled={sending} />
             </>
           ) : (
             <div className="flex-1 flex items-center justify-center">
