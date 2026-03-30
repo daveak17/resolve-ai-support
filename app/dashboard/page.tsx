@@ -44,6 +44,7 @@ export default function DashboardPage() {
   const [sending, setSending] = useState(false)
 
   const currentRoomRef = useRef<string | null>(null)
+  const loadingTicketRef = useRef(false)
 
   useEffect(() => {
     if (status === 'unauthenticated') {
@@ -52,27 +53,26 @@ export default function DashboardPage() {
   }, [status, router])
 
   useEffect(() => {
-    if (status === 'authenticated') {
-      fetchTickets()
-      setupSocket()
-    }
-  }, [status])
+    if (status !== 'authenticated') return
 
-  function setupSocket() {
+    fetchTickets()
+
     const socket = getSocket()
-
-    // Remove any existing listeners first to prevent duplicates
     socket.off('message-received')
-
     socket.on('message-received', (message: Message) => {
+      if (loadingTicketRef.current) return
       setSelectedTicketMessages((prev) => {
-        // Check if message already exists to prevent duplicates
-        const exists = prev.some((m) => m.id === message.id)
-        if (exists) return prev
-        return [...prev, message]
+        const safePrev = Array.isArray(prev) ? prev : []
+        const exists = safePrev.some((m) => m.id === message.id)
+        if (exists) return safePrev
+        return [...safePrev, message]
       })
     })
-  }
+
+    return () => {
+      socket.off('message-received')
+    }
+  }, [status])
 
   async function fetchTickets() {
     try {
@@ -89,24 +89,33 @@ export default function DashboardPage() {
   }
 
   async function handleSelectTicket(ticketId: string) {
+    console.log('Selecting ticket:', ticketId)
     setSelectedTicketId(ticketId)
+    setSelectedTicketMessages([])
+    loadingTicketRef.current = true
 
-    // Leave the previous room and join the new one
     const socket = getSocket()
     if (currentRoomRef.current) {
       socket.emit('leave-ticket', currentRoomRef.current)
     }
-    socket.emit('join-ticket', ticketId)
     currentRoomRef.current = ticketId
 
     try {
       const response = await fetch(`/api/tickets/${ticketId}`)
+      console.log('Response status:', response.status)
       if (response.ok) {
         const data = await response.json()
-        setSelectedTicketMessages(data.messages)
+        console.log('Data received:', JSON.stringify(data).slice(0, 200))
+        console.log('Messages count:', data.messages?.length)
+        const messages = data.messages || []
+        setSelectedTicketMessages(messages)
+        loadingTicketRef.current = false
+        socket.emit('join-ticket', ticketId)
       }
     } catch (error) {
       console.error('Failed to fetch ticket:', error)
+      loadingTicketRef.current = false
+      socket.emit('join-ticket', ticketId)
     }
   }
 
@@ -135,10 +144,11 @@ export default function DashboardPage() {
           },
         }
 
-        // Add to local state immediately
-        setSelectedTicketMessages((prev) => [...prev, safeMessage])
+        setSelectedTicketMessages((prev) => {
+          const safePrev = Array.isArray(prev) ? prev : []
+          return [...safePrev, safeMessage]
+        })
 
-        // Broadcast to customer via Socket.io
         const socket = getSocket()
         socket.emit('send-message', {
           ticketId: selectedTicketId,
@@ -177,7 +187,8 @@ export default function DashboardPage() {
   }
 
   function formatMessages(messages: Message[]) {
-    return messages.map((msg) => ({
+    const safeMessages = Array.isArray(messages) ? messages : []
+    return safeMessages.map((msg) => ({
       id: msg.id,
       content: msg.content,
       senderName: msg.sender?.name || 'Unknown',
@@ -190,7 +201,7 @@ export default function DashboardPage() {
   }
 
   function getTicketPreview(ticket: Ticket) {
-    if (ticket.messages.length === 0) return 'No messages yet'
+    if (!ticket.messages || ticket.messages.length === 0) return 'No messages yet'
     return ticket.messages[0].content
   }
 

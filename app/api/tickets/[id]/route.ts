@@ -89,7 +89,6 @@ export async function PATCH(
     const body = await request.json()
     const { status } = body
 
-    // Validate status value
     const validStatuses = ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED']
     if (!validStatuses.includes(status)) {
       return NextResponse.json(

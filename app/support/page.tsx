@@ -35,10 +35,6 @@ export default function SupportPage() {
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
 
-  // useRef lets us track whether we have joined the socket room
-  // without causing re-renders when it changes
-  const joinedRoom = useRef(false)
-
   // Redirect if not logged in
   useEffect(() => {
     if (status === 'unauthenticated') {
@@ -56,15 +52,24 @@ export default function SupportPage() {
   // Set up Socket.io connection when we have a ticket
   useEffect(() => {
     if (!ticket) return
-    if (joinedRoom.current) return
 
     const socket = getSocket()
 
-    // Join this ticket's room so we receive messages for it
+    function joinRoom() {
+      socket.emit('join-ticket', ticket!.id)
+      console.log('Joined room:', ticket!.id)
+    }
+
+    // Join immediately
+    joinRoom()
+
+    // Re-join if socket reconnects
+    socket.on('connect', joinRoom)
+
+    // Listen for incoming messages
     socket.on('message-received', (message: Message) => {
       setTicket((prev) => {
         if (!prev) return prev
-        // Check if message already exists to prevent duplicates
         const exists = prev.messages.some((m) => m.id === message.id)
         if (exists) return prev
         return {
@@ -74,11 +79,11 @@ export default function SupportPage() {
       })
     })
 
-    // Cleanup when component unmounts
     return () => {
+      socket.off('connect', joinRoom)
       socket.off('message-received')
     }
-  }, [ticket])
+  }, [ticket?.id])
 
   async function fetchExistingTicket() {
     try {
